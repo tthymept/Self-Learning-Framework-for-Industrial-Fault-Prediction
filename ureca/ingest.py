@@ -120,13 +120,16 @@ def ingest_batch(conn, paths, batch_dir: Path):
         if p.is_dir() and p.name != "__MACOSX"
     ]
 
-    # stop before touching anything if a class folder can't be identified
     unknown = [p.name for p in cls_dirs if resolve_label(p.name) is None]
     if unknown:
         print(
             f"[{batch_dir.name}] SKIPPED, unrecognised class folders: {unknown}. "
             "Rename them or add keywords in ureca/classes.py"
         )
+        return None
+
+    if not any(d.glob("*.txt") for d in cls_dirs):
+        print(f"[{batch_dir.name}] no .txt files, skipped")
         return None
 
     cur = conn.execute(
@@ -152,23 +155,33 @@ def ingest_batch(conn, paths, batch_dir: Path):
         (n_ok, n_rej, batch_id),
     )
     conn.commit()
-
-    # clean up emptied folders in drop/
-    for d in sorted(batch_dir.rglob("*"), reverse=True):
-        if d.is_dir() and not any(d.iterdir()):
-            d.rmdir()
-    if batch_dir.exists() and not any(batch_dir.iterdir()):
-        batch_dir.rmdir()
-
     print(f"[{batch_dir.name}] ok={n_ok} rejected={n_rej}")
+
+    # best-effort cleanup of empty folders (OneDrive may lock them briefly)
+    try:
+        for d in sorted(batch_dir.rglob("*"), reverse=True):
+            if d.is_dir() and not any(d.iterdir()):
+                d.rmdir()
+        if batch_dir.exists() and not any(batch_dir.iterdir()):
+            batch_dir.rmdir()
+    except OSError:
+        print(f"[{batch_dir.name}] couldn't remove empty folders; delete them manually")
     return batch_id
 
 
-def main(names=None):
+def summarize(batches):
+    for b in batches:
+        print(f"\n{b.name}")
+        for d in sorted(p for p in b.iterdir() if p.is_dir() and p.name != "__MACOSX"):
+            n = len(list(d.glob("*.txt")))
+            print(f"  {d.name} -> {resolve_label(d.name) or 'UNRECOGNISED'}: {n} files")
+    print()
+
+
+def main(names=None, assume_yes=False):
     paths = ensure_dirs()
     drop = paths["drop"]
 
-    # extract any zips first
     zips = sorted(drop.glob("*.zip"))
     for z in zips:
         unzip_to_drop(z, drop)
@@ -181,6 +194,13 @@ def main(names=None):
     if not batches:
         print("Nothing in drop/")
         return
+
+    summarize(batches)
+    if not assume_yes:
+        if input("Process these? [y/N] ").strip().lower() != "y":
+            print("Cancelled. Files left in drop/.")
+            return
+
     init_db()
     real = db_path()
     with tempfile.TemporaryDirectory() as tmp:
@@ -200,7 +220,6 @@ def main(names=None):
             conn.close()
             shutil.copy2(local, real)
 
-    # remove a zip only once its extracted folder has been fully ingested
     for z in zips:
         name = re.sub(r"\s*\(\d+\)$", "", z.stem)
         if not (drop / name).exists():
@@ -208,4 +227,10 @@ def main(names=None):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:] or None)
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("batches", nargs="*")
+    ap.add_argument("-y", "--yes", action="store_true", help="skip confirmation")
+    a = ap.parse_args()
+    main(a.batches or None, a.yes)
