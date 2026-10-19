@@ -2,7 +2,6 @@ import hashlib
 import re
 import shutil
 import sys
-import tempfile
 from datetime import datetime
 from pathlib import Path
 import zipfile
@@ -10,7 +9,8 @@ import zipfile
 import numpy as np
 
 from .config import ensure_dirs
-from .db import connect, db_path, init_db
+from .db import local_copy
+from .split import assign_sessions_and_folds
 from .classes import resolve_label
 
 N_SAMPLES = 16384
@@ -201,24 +201,16 @@ def main(names=None, assume_yes=False):
             print("Cancelled. Files left in drop/.")
             return
 
-    init_db()
-    real = db_path()
-    with tempfile.TemporaryDirectory() as tmp:
-        local = Path(tmp) / "ureca.sqlite"
-        shutil.copy2(real, local)
-        conn = connect(local)
-        try:
-            for b in batches:
-                ingest_batch(conn, paths, b)
-            print(conn.execute(
-                "SELECT label, COUNT(*) FROM files GROUP BY label"
-            ).fetchall())
-            print(conn.execute(
-                "SELECT reason, COUNT(*) FROM rejections GROUP BY reason"
-            ).fetchall())
-        finally:
-            conn.close()
-            shutil.copy2(local, real)
+    with local_copy() as conn:
+        for b in batches:
+            ingest_batch(conn, paths, b)
+        print(conn.execute(
+            "SELECT label, COUNT(*) FROM files GROUP BY label"
+        ).fetchall())
+        print(conn.execute(
+            "SELECT reason, COUNT(*) FROM rejections GROUP BY reason"
+        ).fetchall())
+        assign_sessions_and_folds(conn)
 
     for z in zips:
         name = re.sub(r"\s*\(\d+\)$", "", z.stem)

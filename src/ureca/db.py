@@ -1,4 +1,9 @@
+import shutil
 import sqlite3
+import tempfile
+from contextlib import contextmanager
+from pathlib import Path
+
 from .config import ensure_dirs
 
 SCHEMA = """
@@ -22,6 +27,8 @@ CREATE TABLE IF NOT EXISTS files (
     n_samples    INTEGER NOT NULL,
     peak_value   REAL,                   -- QA only, not a model input
     split        TEXT CHECK (split IN ('train','val','test')),
+    session_id   TEXT,                   -- recording session (see split.py)
+    fold         INTEGER,                -- cross-validation fold (see split.py)
     status       TEXT NOT NULL DEFAULT 'ok'
 );
 
@@ -45,6 +52,36 @@ def connect(path=None):
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
+# columns added after the first release; added to older databases by init_db
+NEW_COLUMNS = {"files": {"session_id": "TEXT", "fold": "INTEGER"}}
+
+def migrate(conn):
+    for table, cols in NEW_COLUMNS.items():
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for col, typ in cols.items():
+            if col not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+
 def init_db(path=None):
     with connect(path) as conn:
         conn.executescript(SCHEMA)
+        migrate(conn)
+
+@contextmanager
+def local_copy():
+    """Write to a temporary local copy of the database, then copy it back.
+
+    OneDrive never sees a half-written file. The copy goes back even after an
+    error, so work committed before the error is kept.
+    """
+    init_db()
+    real = db_path()
+    with tempfile.TemporaryDirectory() as tmp:
+        local = Path(tmp) / "ureca.sqlite"
+        shutil.copy2(real, local)
+        conn = connect(local)
+        try:
+            yield conn
+        finally:
+            conn.close()
+            shutil.copy2(local, real)
