@@ -123,6 +123,8 @@ URECA/                          local workspace, NOT in git
       db.py                     SQLite schema and connection helpers
       classes.py                folder-name -> class label matching
       ingest.py                 the ingestion pipeline
+    notebooks/                  analysis notebooks (read-only use of the data)
+      01_eda_onsite_data.ipynb  exploratory analysis of each class
     .venv/                      created by `uv sync`, ignored by git
   data_original/                untouched copy of the data as first received
     Onsite data/
