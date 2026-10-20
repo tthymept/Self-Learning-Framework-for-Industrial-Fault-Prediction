@@ -34,6 +34,25 @@ def metrics(y, pred) -> dict:
     return out
 
 
+def balanced_log_loss(y, proba, eps=1e-6) -> float:
+    """-log(probability given to the true class), averaged within each class,
+    then over classes. Lower is better; guessing 1/4 for everything = log 4 = 1.39.
+    Unlike macro-F1 it also moves when a file is right but barely, so it is a
+    smoother signal for comparing models on few files."""
+    y = np.asarray(y)
+    nll = -np.log(np.clip(np.asarray(proba)[np.arange(len(y)), y], eps, 1))
+    return float(np.mean([nll[y == c].mean() for c in np.unique(y)]))
+
+
+def session_balanced_accuracy(y, pred, sessions) -> float:
+    """Share correct within each recording session, averaged over the sessions of
+    a class, then over classes. Every session counts once, so a 62-file session
+    that goes right or wrong together weighs the same as a 1-file session."""
+    df = pd.DataFrame({"y": np.asarray(y), "ok": np.asarray(y) == np.asarray(pred), "s": np.asarray(sessions)})
+    per_session = df.groupby("s").agg(y=("y", "first"), ok=("ok", "mean"))
+    return float(per_session.groupby("y")["ok"].mean().mean())
+
+
 def score(y, pred, folds):
     """(per-fold metrics table, metrics over all out-of-fold predictions)."""
     y, pred, folds = map(np.asarray, (y, pred, folds))

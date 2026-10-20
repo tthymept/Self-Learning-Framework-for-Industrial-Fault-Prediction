@@ -17,6 +17,7 @@ CLASSES = ["partial_discharge", "switching_noise", "transient_noise", "spark_lig
 FS = 125e6               # samples per second
 TRIGGER = 8192           # sample index of the trigger (centre of the window)
 CACHE_NAME = "waveforms.npz"
+LOG_EPS = 1e-3           # volts; "log" normalisation is linear below this, logarithmic above
 
 
 def load_index(conn=None) -> pd.DataFrame:
@@ -71,6 +72,8 @@ def preprocess(x: np.ndarray, crop=None, normalize="none", scale=1.0) -> np.ndar
     normalize: "none"   - volts, baseline removed
                "global" - divided by a fixed `scale` shared by all files
                "peak"   - each file divided by its own peak, so only shape is left
+               "log"    - sign(x) * log(1 + |x| / LOG_EPS), scaled so 1 V -> 1. Keeps
+                          amplitude but compresses it, so small ringing stays visible
     """
     x = x - np.median(x, axis=-1, keepdims=True)
     if crop is not None:
@@ -81,6 +84,8 @@ def preprocess(x: np.ndarray, crop=None, normalize="none", scale=1.0) -> np.ndar
         x = x / scale
     elif normalize == "peak":
         x = x / np.abs(x).max(axis=-1, keepdims=True)
+    elif normalize == "log":
+        x = np.sign(x) * np.log1p(np.abs(x) / LOG_EPS) / np.log1p(1 / LOG_EPS)
     elif normalize != "none":
         raise ValueError(f"unknown normalize: {normalize}")
     return x.astype(np.float32)
@@ -90,20 +95,27 @@ class WaveformDataset(Dataset):
     """Item i -> (tensor of shape [1, length], class id).
 
     The leading 1 is the channel dimension that 1-D CNN layers expect.
+    augment: optional function (raw waveform, rng) -> waveform, applied before
+    preprocessing. Use it for training data only.
     """
 
-    def __init__(self, X, y, rows, crop=None, normalize="none", scale=1.0):
+    def __init__(self, X, y, rows, crop=None, normalize="none", scale=1.0, augment=None, seed=0):
         self.X = X
         self.y = np.asarray(y)
         self.rows = np.asarray(rows)
         self.kw = dict(crop=crop, normalize=normalize, scale=scale)
+        self.augment = augment
+        self.rng = np.random.default_rng(seed)
 
     def __len__(self):
         return len(self.rows)
 
     def __getitem__(self, i):
         r = self.rows[i]
-        x = preprocess(self.X[r], **self.kw)
+        x = self.X[r]
+        if self.augment is not None:
+            x = self.augment(x, self.rng)
+        x = preprocess(x, **self.kw)
         return torch.from_numpy(x)[None, :], int(self.y[r])
 
 
@@ -119,5 +131,16 @@ def balanced_sampler(y, seed=0) -> WeightedRandomSampler:
     y = np.asarray(y)
     counts = np.bincount(y)
     w = 1.0 / counts[y]
+    g = torch.Generator().manual_seed(seed)
+    return WeightedRandomSampler(torch.tensor(w, dtype=torch.double), len(y), replacement=True, generator=g)
+
+
+def session_balanced_sampler(y, sessions, seed=0) -> WeightedRandomSampler:
+    """Like balanced_sampler, but inside each class every recording session is
+    drawn equally often, so one 60-file session does not drown out a 16-file one."""
+    y, sessions = np.asarray(y), np.asarray(sessions)
+    _, s_idx, s_size = np.unique(sessions, return_inverse=True, return_counts=True)
+    n_sess = {c: len(np.unique(sessions[y == c])) for c in np.unique(y)}
+    w = 1.0 / (s_size[s_idx] * np.array([n_sess[c] for c in y]))
     g = torch.Generator().manual_seed(seed)
     return WeightedRandomSampler(torch.tensor(w, dtype=torch.double), len(y), replacement=True, generator=g)
