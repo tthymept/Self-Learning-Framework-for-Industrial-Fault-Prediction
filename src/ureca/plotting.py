@@ -1,9 +1,9 @@
-"""Shared plot style for the notebooks: fixed colours and markers per class."""
+"""Notebook helper: shared plot style: fixed colours and markers per class."""
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
-from .data import CLASSES
+from .dataset.loading import CLASSES
 
 NAMES = {"partial_discharge": "Partial discharge", "switching_noise": "Switching noise",
          "transient_noise": "Transient noise", "spark_lighter": "Spark lighter"}

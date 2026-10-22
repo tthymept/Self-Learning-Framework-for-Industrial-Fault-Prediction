@@ -1,3 +1,8 @@
+"""Stage 1 (ingest): validate dropped .txt files, copy them to processed/, register them in the database.
+
+    uv run python -m ureca.ingest                    all batches in drop/
+    uv run python -m ureca.ingest "<batch name>" -y  one batch, no prompt
+"""
 import hashlib
 import re
 import shutil
@@ -8,10 +13,10 @@ import zipfile
 
 import numpy as np
 
-from .config import ensure_dirs
-from .db import local_copy
-from .split import assign_sessions_and_folds
-from .classes import resolve_label
+from ..config import ensure_dirs
+from ..db import local_copy
+from ..dataset.folds import assign_sessions_and_folds
+from .labels import resolve_label
 
 N_SAMPLES = 16384
 MAX_ABS = 1.5  # volts; sanity limit (spark files clip at ~1.0)
@@ -124,7 +129,7 @@ def ingest_batch(conn, paths, batch_dir: Path):
     if unknown:
         print(
             f"[{batch_dir.name}] SKIPPED, unrecognised class folders: {unknown}. "
-            "Rename them or add keywords in ureca/classes.py"
+            "Rename them or add keywords in ureca/ingest/labels.py"
         )
         return None
 
@@ -217,12 +222,3 @@ def main(names=None, assume_yes=False):
         if not (drop / name).exists():
             z.unlink()
 
-
-if __name__ == "__main__":
-    import argparse
-
-    ap = argparse.ArgumentParser()
-    ap.add_argument("batches", nargs="*")
-    ap.add_argument("-y", "--yes", action="store_true", help="skip confirmation")
-    a = ap.parse_args()
-    main(a.batches or None, a.yes)

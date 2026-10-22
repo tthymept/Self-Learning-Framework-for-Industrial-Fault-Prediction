@@ -1,4 +1,4 @@
-"""Scoring models with the session-based folds (shared by baseline and CNN).
+"""Stage 4 (evaluate): scoring models with the session-based folds (shared by baseline and CNN).
 
     pred = cv_predict(make_model, F, files)   # out-of-fold predictions
     per_fold, overall = score(files["y"], pred, files["fold"])
@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import balanced_accuracy_score, confusion_matrix, f1_score, recall_score
 
-from .data import CLASSES, fold_split
-from .split import N_FOLDS
+from .dataset.folds import N_FOLDS
+from .dataset.loading import CLASSES, fold_split
 
 
 def cv_predict(make_model, F, files, n_folds=N_FOLDS) -> np.ndarray:

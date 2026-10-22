@@ -1,4 +1,4 @@
-"""Recording sessions and cross-validation folds.
+"""Stage 2 (dataset): recording sessions and cross-validation folds.
 
 Files of the same class recorded within SESSION_GAP_S seconds of each other
 belong to one session (they are near-copies of each other). Whole sessions
@@ -8,14 +8,14 @@ validation.
 Fold assignment is stable: sessions that already have a fold keep it, and new
 sessions go to the fold that has the fewest files of that class.
 
-    uv run python -m ureca.split            assign and print a summary
-    uv run python -m ureca.split --dry-run  print what would be assigned
+    uv run python -m ureca.dataset.folds            assign and print a summary
+    uv run python -m ureca.dataset.folds --dry-run  print what would be assigned
 """
 from collections import Counter
 
 import pandas as pd
 
-from .db import connect, local_copy
+from ..db import connect, local_copy
 
 N_FOLDS = 3          # limited by switching noise, which has only 3 sessions
 SESSION_GAP_S = 60   # files closer than this (same class) share a session

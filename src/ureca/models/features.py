@@ -1,4 +1,4 @@
-"""Hand-made features for the baseline model (one row per waveform).
+"""Stage 3 (models): hand-made features for the baseline model (one row per waveform).
 
 AMPLITUDE features depend on the signal size in volts (and therefore on the
 recorder's gain and trigger level). SHAPE features do not: they stay the same
@@ -7,7 +7,7 @@ if a waveform is scaled up or down.
 import numpy as np
 import pandas as pd
 
-from .data import FS, TRIGGER
+from ..dataset.loading import FS, TRIGGER
 
 BANDS_MHZ = [(0, 2), (2, 5), (5, 10), (10, 20), (20, 40), (40, 62.5)]
 AMPLITUDE = ["peak", "rms", "clipped"]

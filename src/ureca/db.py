@@ -1,3 +1,4 @@
+"""Shared: SQLite schema and connection helpers."""
 import shutil
 import sqlite3
 import tempfile
@@ -27,8 +28,8 @@ CREATE TABLE IF NOT EXISTS files (
     n_samples    INTEGER NOT NULL,
     peak_value   REAL,                   -- QA only, not a model input
     split        TEXT CHECK (split IN ('train','val','test')),
-    session_id   TEXT,                   -- recording session (see split.py)
-    fold         INTEGER,                -- cross-validation fold (see split.py)
+    session_id   TEXT,                   -- recording session (see dataset/folds.py)
+    fold         INTEGER,                -- cross-validation fold (see dataset/folds.py)
     status       TEXT NOT NULL DEFAULT 'ok'
 );
 

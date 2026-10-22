@@ -117,17 +117,22 @@ URECA/                          local workspace, NOT in git
     .python-version, .gitignore
     README.md
     run_ingest.bat              optional double-click launcher (edit the path inside)
-    src/ureca/                  the Python package (`import ureca`)
-      __init__.py
-      config.py                 data root lookup, creates the folder structure
-      db.py                     SQLite schema and connection helpers
-      classes.py                folder-name -> class label matching
-      ingest.py                 the ingestion pipeline
-      split.py                  recording sessions and cross-validation folds (section 9)
-      data.py                   file index, waveform cache, PyTorch Dataset, samplers
-      evaluate.py               out-of-fold predictions and scores
-      features.py               hand-made features for the baseline
-      cnn.py                    1-D CNN, trained and scored with the folds
+    src/ureca/                  the Python package (`import ureca`), one folder per pipeline stage
+      __init__.py               map of the package
+      config.py                 shared: data root lookup, creates the folder structure
+      db.py                     shared: SQLite schema and connection helpers
+      ingest/                   STAGE 1: raw .txt batches -> validated files + database rows
+        __main__.py             entry point for `python -m ureca.ingest`
+        pipeline.py             validate, copy, register, reject
+        labels.py               folder name -> class label matching (section 7)
+      dataset/                  STAGE 2: database -> model-ready data
+        folds.py                recording sessions and cross-validation folds (section 9)
+        loading.py              file index, waveform cache, fold_split, CLASSES/FS/TRIGGER
+        torch_data.py           preprocessing, PyTorch Dataset, class weights, samplers
+      models/                   STAGE 3: waveforms -> predictions
+        features.py             hand-made features for the baseline
+        cnn.py                  1-D CNN, trained and scored with the folds
+      evaluate.py               STAGE 4: out-of-fold predictions and scores
       plotting.py               shared plot style for the notebooks
     notebooks/                  analysis notebooks (read-only use of the data)
       01_eda_onsite_data.ipynb  exploratory analysis of each class
@@ -142,7 +147,7 @@ URECA/                          local workspace, NOT in git
 
 The live data (drop/processed/db) is **not** in either place. It is in `URECA_project_root` on OneDrive (section 2).
 
-The package uses the `src/` layout: `uv sync` installs `ureca` into `.venv` in editable mode, so `uv run python -m ureca.ingest` works and code edits apply immediately. New modules go in `src/ureca/`.
+The package uses the `src/` layout: `uv sync` installs `ureca` into `.venv` in editable mode, so `uv run python -m ureca.ingest` works and code edits apply immediately. New modules go in the folder of the stage they belong to. A stage only imports from the stages above it (ingest → dataset → models → evaluate), never the other way round.
 
 ---
 
@@ -205,7 +210,7 @@ The script works on a **temporary local copy** of the database and copies it bac
 
 ---
 
-## 7. Class label matching (`src/ureca/classes.py`)
+## 7. Class label matching (`src/ureca/ingest/labels.py`)
 
 Folder names vary (e.g. `Data_Partial discharge`). Names are lowercased, punctuation is stripped, and keywords are matched:
 
@@ -236,15 +241,15 @@ uv run python -c "from ureca.db import connect; c=connect(); print(c.execute('se
 **Troubleshooting**
 | Problem | Cause / fix |
 |---|---|
-| `ImportError: cannot import name 'resolve_label'` | `src/ureca/classes.py` empty or unsaved. Save the file. |
+| `ImportError: cannot import name 'resolve_label'` | `src/ureca/ingest/labels.py` empty or unsaved. Save the file. |
 | `PermissionError ... rmdir` on a `drop/` folder | OneDrive briefly locks empty folders. Cleanup is now non-fatal. Delete the leftover folder manually. |
 | `RuntimeError: Set URECA_DATA_ROOT` | Variable not set, or terminal/VS Code not restarted after `setx`. |
 | Python cannot read data files | Files are cloud-only. Set the folder to "Always keep on this device". |
-| Batch skipped, unrecognised class folders | Rename the folder or add keywords in `classes.py`. |
+| Batch skipped, unrecognised class folders | Rename the folder or add keywords in `ingest/labels.py`. |
 
 ---
 
-## 9. Cross-validation folds and data leakage (`src/ureca/split.py`)
+## 9. Cross-validation folds and data leakage (`src/ureca/dataset/folds.py`)
 
 ### The problem
 *Data leakage* means the validation files contain information the model already saw in training, so the score looks better than the model really is.
@@ -259,8 +264,8 @@ Here it would come from how the data was recorded. Switching noise was captured 
 There are `N_FOLDS = 3` folds because switching noise has only 3 sessions, and each fold needs at least one of each class. Every score is out-of-fold: each file is predicted by a model trained on the other two folds (`evaluate.cv_predict`).
 
 ```powershell
-uv run python -m ureca.split --dry-run   # show the assignment without writing
-uv run python -m ureca.split             # (re)assign and print files/sessions per class and fold
+uv run python -m ureca.dataset.folds --dry-run   # show the assignment without writing
+uv run python -m ureca.dataset.folds             # (re)assign and print files/sessions per class and fold
 ```
 
 ### How much it matters (notebook 03, section 6)

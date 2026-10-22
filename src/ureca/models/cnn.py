@@ -1,4 +1,4 @@
-"""Small 1-D CNN on the raw waveform, trained and scored with the session folds.
+"""Stage 3 (models): small 1-D CNN on the raw waveform, trained and scored with the session folds.
 
     cfg = CNNConfig(sampler="session", augment="light")
     P = cv_cnn(X, files, cfg, seeds=range(10))  # (n_seeds, n_files, n_classes)
@@ -18,11 +18,12 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
-from .config import ensure_dirs
-from .data import (CLASSES, WaveformDataset, balanced_sampler, fold_split, preprocess,
-                   session_balanced_sampler)
+from ..config import ensure_dirs
+from ..dataset.folds import N_FOLDS
+from ..dataset.loading import CLASSES, fold_split
+from ..dataset.torch_data import (WaveformDataset, balanced_sampler, preprocess,
+                                  session_balanced_sampler)
 from .features import AMPLITUDE, SHAPE, compute_features
-from .split import N_FOLDS
 
 # Results change slightly with the number of CPU threads (floating-point sums
 # are added in a different order), so it is fixed for reproducible runs.

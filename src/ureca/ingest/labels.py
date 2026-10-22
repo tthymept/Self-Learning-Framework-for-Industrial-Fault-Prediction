@@ -1,6 +1,4 @@
-# to match class name to the table
-# new classes to be added here
-
+"""Stage 1 (ingest): class folder name -> class label. New classes are added here."""
 import re
 
 # canonical label -> keyword patterns (matched on lowercase, punctuation-stripped name)

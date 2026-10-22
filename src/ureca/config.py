@@ -1,3 +1,4 @@
+"""Shared: where the data lives (URECA_DATA_ROOT) and its folder structure."""
 import os
 from pathlib import Path
 
