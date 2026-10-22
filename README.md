@@ -1,7 +1,7 @@
 # Self-Learning Framework for Industrial Fault Prediction (URECA EEE26210)
 
 Partial discharge (PD) classification from raw sensor waveforms.
-This README covers the **data layer only**: environment setup, data storage and the ingestion pipeline. Modelling is not started.
+This README covers the **data layer**: environment setup, data storage, the ingestion pipeline, and how files are split into cross-validation folds without data leakage (section 9). The models themselves are explained in notebooks 03 (baseline) and 04 (CNN).
 
 ---
 
@@ -123,8 +123,17 @@ URECA/                          local workspace, NOT in git
       db.py                     SQLite schema and connection helpers
       classes.py                folder-name -> class label matching
       ingest.py                 the ingestion pipeline
+      split.py                  recording sessions and cross-validation folds (section 9)
+      data.py                   file index, waveform cache, PyTorch Dataset, samplers
+      evaluate.py               out-of-fold predictions and scores
+      features.py               hand-made features for the baseline
+      cnn.py                    1-D CNN, trained and scored with the folds
+      plotting.py               shared plot style for the notebooks
     notebooks/                  analysis notebooks (read-only use of the data)
       01_eda_onsite_data.ipynb  exploratory analysis of each class
+      02_setup_folds_and_dataloader_explained.ipynb   sessions, folds, data loader
+      03_baseline_model.ipynb   feature-based baseline, incl. the leakage check
+      04_cnn_model.ipynb        1-D CNN, compared with the baseline
     .venv/                      created by `uv sync`, ignored by git
   data_original/                untouched copy of the data as first received
     Onsite data/
@@ -133,7 +142,7 @@ URECA/                          local workspace, NOT in git
 
 The live data (drop/processed/db) is **not** in either place. It is in `URECA_project_root` on OneDrive (section 2).
 
-The package uses the `src/` layout: `uv sync` installs `ureca` into `.venv` in editable mode, so `uv run python -m ureca.ingest` works and code edits apply immediately. New modules (for example `dataset.py`, `split.py`) go in `src/ureca/`.
+The package uses the `src/` layout: `uv sync` installs `ureca` into `.venv` in editable mode, so `uv run python -m ureca.ingest` works and code edits apply immediately. New modules go in `src/ureca/`.
 
 ---
 
@@ -156,7 +165,9 @@ SQLite is a single file read and written through Python's built-in `sqlite3`. No
 | `sha256` | Content hash, UNIQUE, used for duplicate detection |
 | `n_samples` | 16384 |
 | `peak_value` | Max \|deviation from median\|, QA only, not a model input |
-| `split` | `train` / `val` / `test`. Empty until assigned |
+| `split` | `train` / `val` / `test`. Not used: evaluation uses `fold` instead |
+| `session_id` | Recording session, `<label>@<first timestamp>` (section 9) |
+| `fold` | Cross-validation fold `0`–`2`. A whole session shares one fold (section 9) |
 | `status` | `ok` (an `excluded` value is available for bad captures) |
 
 **`rejections`**: files that failed validation (`batch_id, filename, reason, rejected_at`). Rejected files do not enter `files`.
@@ -187,7 +198,8 @@ Options: `uv run python -m ureca.ingest "<batch folder name>"` processes one bat
    - On success: copies to `processed/<label>/`, inserts the row, then deletes the original. On any crash, re-running is safe because of the hash check.
    - On failure: copies to `rejected/<batch>/<label>/`, logs the reason in `rejections`, removes the original.
 4. Updates the batch counts and prints class counts and rejection reasons.
-5. Removes emptied folders (best effort) and deletes the zip only once its folder is fully ingested.
+5. Assigns sessions and folds to the new files (section 9). Existing files keep their fold.
+6. Removes emptied folders (best effort) and deletes the zip only once its folder is fully ingested.
 
 The script works on a **temporary local copy** of the database and copies it back to OneDrive at the end, so OneDrive never syncs a half-written file.
 
@@ -232,7 +244,43 @@ uv run python -c "from ureca.db import connect; c=connect(); print(c.execute('se
 
 ---
 
-## 9. Design decisions
+## 9. Cross-validation folds and data leakage (`src/ureca/split.py`)
+
+### The problem
+*Data leakage* means the validation files contain information the model already saw in training, so the score looks better than the model really is.
+
+Here it would come from how the data was recorded. Switching noise was captured about once per second for a minute, so files recorded seconds apart are **near-copies**. Each session also has its own signature (trigger level, amplitude). With an ordinary random split, near-copies from the same burst land in both training and validation. The model can then recognise the session instead of learning the waveform shape, and the test becomes partly a memory test.
+
+### The fix: split by session, not by file
+1. **Sessions:** files of the same class recorded less than `SESSION_GAP_S = 60` seconds apart share a `session_id`.
+2. **Folds:** whole sessions are assigned to folds, so a session is never split between training and validation. Large sessions are placed first, each in the fold with the fewest files of its class, to keep the classes balanced across folds.
+3. **Stable:** sessions that already have a fold keep it when new batches arrive, so earlier results stay comparable.
+
+There are `N_FOLDS = 3` folds because switching noise has only 3 sessions, and each fold needs at least one of each class. Every score is out-of-fold: each file is predicted by a model trained on the other two folds (`evaluate.cv_predict`).
+
+```powershell
+uv run python -m ureca.split --dry-run   # show the assignment without writing
+uv run python -m ureca.split             # (re)assign and print files/sessions per class and fold
+```
+
+### How much it matters (notebook 03, section 6)
+Macro-F1 for the same models, scored with the session folds and with a random 3-fold split (mean of 5 shuffles):
+
+| Model | Session split (honest) | Random split (leaky) |
+|---|---|---|
+| Logistic regression | 0.533 | 0.937 |
+| Random forest | 0.763 | 0.916 |
+
+The models are the same; only the split changed. **Always report the session-split score**, and when comparing with published PD results, check how they split their data.
+
+### Other leaks to avoid
+- **Normalisation:** with `normalize="global"`, compute the scale from the training folds only, never from the validation files.
+- **Early stopping:** the CNN trains for a fixed number of epochs. Stopping where the validation score peaks would let the validation files choose the model.
+- **Any other preprocessing** fitted to data (scalers, feature selection, thresholds) is fitted inside each fold on the training part only.
+
+---
+
+## 10. Design decisions
 
 - **SQLite over hosted DB (Supabase etc.):** school restrictions are unknown, the data is small (~11 MB as float32) and there is a single writer. A file works on any device with no credentials.
 - **SQLite over local PostgreSQL:** a local server is not reachable by teammates without network and firewall changes.
@@ -242,16 +290,16 @@ uv run python -c "from ureca.db import connect; c=connect(); print(c.execute('se
 - **Safe ordering (copy, register, delete) plus a hash check:** re-running never creates duplicates.
 - **Strict class matching, no LLM:** a wrong guess would silently mislabel training data.
 - **Confirmation prompt:** prevents processing a wrongly dropped file.
+- **Session-based folds instead of a fixed train/val/test split:** near-copies within a session would leak across a random split (section 9). With only 3 switching-noise sessions, cross-validation uses all the data, and a separate test set is not possible yet.
 
 ---
 
-## 10. Status and next steps
+## 11. Status and next steps
 
-Done: environment, git, data root, schema, ingestion with validation, class matching, confirmation prompt, first batch (167 files).
+Done: environment, git, data root, schema, ingestion with validation, class matching, confirmation prompt, first batch (167 files), EDA, session-based folds, PyTorch `Dataset` and samplers, waveform cache, baseline model, 1-D CNN.
 
 Not done yet:
-1. **Split assignment:** fill `split` once, stratified by class, keeping consecutive-second files together to avoid leakage. New batches get a split on ingest without changing existing rows.
-2. **PyTorch `Dataset`:** read the table, load waveforms, return `(tensor[1, 16384], label_id)`, with a label map and class weights for the imbalance.
-3. Optional: `.npy` cache for faster loading, unlabelled real-world ingestion (`source`, NULL `label`, `predictions` table), model registry in `models/`.
+1. **Held-out test set:** once more sessions are recorded, keep some whole sessions aside as a final test set, never used for model choices.
+2. Optional: unlabelled real-world ingestion (`source`, NULL `label`, `predictions` table), model registry in `models/`.
 
 Open question for the supervisors: does the lab or school have a shared database server?
